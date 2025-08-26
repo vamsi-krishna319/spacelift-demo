@@ -1,4 +1,5 @@
-variable "public_key" {
-  type    = string
-  default = "/mnt/workspace/id_rsa.pub"
+variable "aws_region" {
+  description = "AWS region to deploy into"
+  type        = string
+  default     = "us-east-1"
 }

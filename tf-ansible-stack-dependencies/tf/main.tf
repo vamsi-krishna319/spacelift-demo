@@ -1,34 +1,92 @@
+
 provider "aws" {
-  region = "us-east-1"
+  region = var.aws_region
 }
 
-# ✅ Define 2 instances with a map (hardcoded AMI)
-locals {
-  instances = {
-    instance1 = {
-      ami           = "ami-0360c520857e3138f" 
-      instance_type = "t3.micro"
-    }
-    instance2 = {
-      ami           = "ami-0360c520857e3138f" 
-      instance_type = "t3.micro"
-    }
+# Generate SSH key pair
+resource "tls_private_key" "demo_key" {
+  algorithm = "RSA"
+  rsa_bits  = 4096
+}
+
+# Store private key in SSM Parameter Store
+resource "aws_ssm_parameter" "private_key" {
+  name        = "/ssh/demo-keypair/private"
+  description = "Private SSH key for EC2 demo"
+  type        = "SecureString"
+  value       = tls_private_key.demo_key.private_key_pem
+
+  tags = {
+    environment = "demo"
   }
 }
 
-# ✅ Key Pair (use your existing public key file)
-resource "aws_key_pair" "ssh_key" {
-  key_name   = "ec2-key"
-  public_key = file(var.public_key)
+# Create AWS key pair using the public key
+resource "aws_key_pair" "demo_keypair" {
+  key_name   = "demo-keypair"
+  public_key = tls_private_key.demo_key.public_key_openssh
 }
 
-# ✅ Security Group for SSH + HTTP
-resource "aws_security_group" "web_sg" {
-  name        = "web-sg"
-  description = "Allow SSH and HTTP traffic"
+# Create VPC
+resource "aws_vpc" "demo_vpc" {
+  cidr_block           = "10.0.0.0/16"
+  enable_dns_hostnames = true
+  enable_dns_support   = true
+
+  tags = {
+    Name = "demo-vpc"
+  }
+}
+
+# Internet Gateway
+resource "aws_internet_gateway" "demo_igw" {
+  vpc_id = aws_vpc.demo_vpc.id
+
+  tags = {
+    Name = "demo-igw"
+  }
+}
+
+# Route Table
+resource "aws_route_table" "demo_rt" {
+  vpc_id = aws_vpc.demo_vpc.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.demo_igw.id
+  }
+
+  tags = {
+    Name = "demo-rt"
+  }
+}
+
+# Subnet
+resource "aws_subnet" "demo_subnet" {
+  vpc_id                  = aws_vpc.demo_vpc.id
+  cidr_block              = "10.0.1.0/24"
+  availability_zone       = "us-west-2a"
+  map_public_ip_on_launch = true
+
+  tags = {
+    Name = "demo-subnet"
+  }
+}
+
+# Route Table Association
+resource "aws_route_table_association" "demo_rta" {
+  subnet_id      = aws_subnet.demo_subnet.id
+  route_table_id = aws_route_table.demo_rt.id
+}
+
+# Security Group
+resource "aws_security_group" "demo_sg" {
+  name        = "demo-sg"
+  description = "Allow SSH and HTTP inbound traffic"
+  vpc_id      = aws_vpc.demo_vpc.id
 
   ingress {
-    description = "SSH"
+    description = "SSH from anywhere"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
@@ -36,7 +94,7 @@ resource "aws_security_group" "web_sg" {
   }
 
   ingress {
-    description = "HTTP"
+    description = "HTTP from anywhere"
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
@@ -49,19 +107,39 @@ resource "aws_security_group" "web_sg" {
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
-}
-
-# ✅ Create EC2 instances with for_each
-resource "aws_instance" "this" {
-  for_each                    = local.instances
-  ami                         = each.value.ami
-  instance_type               = each.value.instance_type
-  key_name                    = aws_key_pair.ssh_key.key_name
-  associate_public_ip_address = true
-  vpc_security_group_ids      = [aws_security_group.web_sg.id]
 
   tags = {
-    Name = each.key
+    Name = "demo-sg"
   }
 }
 
+# EC2 Instance
+resource "aws_instance" "demo_instance" {
+  ami                    = ""ami-0360c520857e3138f" " // Replace with a valid AMI ID for your region
+  instance_type          = "t3.micro"
+  subnet_id              = aws_subnet.demo_subnet.id
+  key_name               = aws_key_pair.demo_keypair.key_name
+  vpc_security_group_ids = [aws_security_group.demo_sg.id]
+
+  user_data = <<-EOF
+    #!/bin/bash
+    apt-get update
+    apt-get install -y python3 python3-pip python3-venv
+  EOF
+
+  tags = {
+    Name = "demo-instance"
+  }
+}
+
+# Variables
+variable "aws_region" {
+  description = "AWS region to deploy resources"
+  type        = string
+}
+
+# Outputs
+output "instance_public_ip" {
+  description = "Public IP of the EC2 instance"
+  value       = aws_instance.demo_instance.public_ip
+}
