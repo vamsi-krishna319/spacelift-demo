@@ -132,11 +132,6 @@ resource "aws_instance" "demo_instance" {
   }
 }
 
-# Variables
-variable "aws_region" {
-  description = "AWS region to deploy resources"
-  type        = string
-}
 
 # Outputs
 output "instance_public_ip" {
